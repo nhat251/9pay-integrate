@@ -1,5 +1,8 @@
 # 9pay-integrate
 
+[![npm version](https://img.shields.io/npm/v/9pay-integrate.svg)](https://www.npmjs.com/package/9pay-integrate)
+[![npm downloads](https://img.shields.io/npm/dm/9pay-integrate.svg)](https://www.npmjs.com/package/9pay-integrate)
+
 Complete 9Pay payment gateway integration for Node.js and Next.js. Generate payment URLs, verify callbacks, process IPN webhooks — all with a clean, framework-agnostic core.
 
 ```bash
