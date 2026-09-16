@@ -247,14 +247,20 @@ Found a bug or have a feature request?
 
 ## Releases
 
-Maintainers release with:
+Branching: code on `dev`, merge `dev` into `main` (keep `dev`), then tag on `main`:
 
 ```bash
-npm version patch # or minor / major
+git checkout dev
+# ... code ...
+git push origin dev
+git checkout main
+git merge dev
+git push origin main
+npm version patch # or minor / major — creates commit + tag on main
 git push origin main --follow-tags
 ```
 
-Pushing a `v*` tag triggers GitHub Actions to typecheck, test, build and publish that version to npm.
+Every push and pull request to `main` / `dev` runs typecheck, test and build without publishing. Pushing a `v*` tag whose commit is on `main` publishes that version to npm. Tags created outside `main` are rejected.
 
 ## License
 
