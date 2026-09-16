@@ -236,6 +236,12 @@ All types are exported from the main entry point. Key interfaces:
 4. **Option C for IPN** — encapsulates all 6 steps, but consumer can bypass and call `processIpn()` directly from core
 5. **Fail fast** — config validation at init time, not during live payment
 
+## Support
+
+Found a bug or have a feature request?
+
+[Create an issue](https://github.com/nhat251/9pay-integrate/issues/new)
+
 ## License
 
 MIT

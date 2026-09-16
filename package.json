@@ -2,6 +2,14 @@
   "name": "9pay-integrate",
   "version": "1.0.0",
   "description": "Complete 9Pay payment gateway integration for Node.js and Next.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nhat251/9pay-integrate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nhat251/9pay-integrate/issues"
+  },
+  "homepage": "https://github.com/nhat251/9pay-integrate#readme",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
