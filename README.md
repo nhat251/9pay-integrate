@@ -242,6 +242,17 @@ Found a bug or have a feature request?
 
 [Create an issue](https://github.com/nhat251/9pay-integrate/issues/new)
 
+## Releases
+
+Maintainers release with:
+
+```bash
+npm version patch # or minor / major
+git push origin main --follow-tags
+```
+
+Pushing a `v*` tag triggers GitHub Actions to typecheck, test, build and publish that version to npm.
+
 ## License
 
 MIT
