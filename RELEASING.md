@@ -2,22 +2,27 @@
 
 One-time setup, then 3 commands per release.
 
-## One-time setup: `NPM_TOKEN` secret
+## One-time setup: trusted publishing (OIDC, no tokens)
 
-Publishing fails with `ENEEDAUTH` without this. Do it once:
+CI publishes via npm trusted publishing — no long-lived tokens, nothing
+to expire. (2FA-bypass granular tokens no longer publish directly since
+npm restricted them; do not use `NPM_TOKEN` anymore. If the secret still
+exists in repo settings, delete it.)
 
-1. Create an npm access token:
-   - Go to https://www.npmjs.com → avatar → Access Tokens → Generate New Token.
-   - Use a **Granular Access Token**: read + write scoped to the
-     `9pay-integrate` package, no expiry (or set a reminder to rotate).
-     (A classic **Automation** token also works.)
-2. Add it to GitHub:
-   - Repo page → Settings → Secrets and variables → Actions →
-     New repository secret.
-   - Name: `NPM_TOKEN`, value: paste the token starting with `npm_...`.
-3. Verify: push any `v*` tag later and watch the `publish` job turn green.
-   If it fails with `ENEEDAUTH`, the secret is missing, expired, or lacks
-   publish permission on this package.
+1. Go to https://www.npmjs.com/package/9pay-integrate → Settings (or
+   Access → Trusted Publishers).
+2. Add a GitHub Actions trusted publisher:
+   - Organization/User: `nhat251`
+   - Repository: `9pay-integrate`
+   - Workflow file name: `publish.yml`
+   - Environment: leave empty (or match the workflow's `environment:`
+     if one is ever added — keep them in sync).
+3. Verify: push the next `v*` tag and watch the `publish` job turn
+   green with `+ 9pay-integrate@x.y.z`, then `npm view 9pay-integrate versions`.
+
+The workflow (`.github/workflows/publish.yml`) already carries what OIDC
+needs: `permissions.id-token: write`, `registry-url` on setup-node, and
+`npm publish --provenance`. No `NODE_AUTH_TOKEN` anywhere.
 
 ## Release checklist
 
@@ -57,9 +62,10 @@ Job `publish` (`.github/workflows/publish.yml`):
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `ENEEDAUTH` / need auth | `NPM_TOKEN` missing, expired, or without publish scope | Redo one-time setup above, then re-run failed jobs |
+| `ENEEDAUTH` / need auth | Leftover token auth or missing OIDC trust | Ensure no `NODE_AUTH_TOKEN` in workflow; redo trusted-publisher setup above |
 | Tag-not-on-main error | Tag created from `dev` or another branch | Delete the tag locally + remotely, redo from `main` |
 | Tag/version mismatch | Forgot `npm version` before tagging | Delete the tag, run `npm version`, push again |
+| Version invisible after green publish | Staged by a legacy 2FA-bypass token, awaiting approval | Approve the staged version on npmjs.com (with 2FA), then move to trusted publishing |
 | Anything else red | typecheck/test/build broke after merge | Fix on `dev`, merge, then version + tag again (patch) |
 
 Re-running a failed tag workflow is safe: re-run with
