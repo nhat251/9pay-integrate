@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { createPaymentUrl } from "../src/core/payment-url";
+import { buildHttpQuery, buildSignature } from "../src/core/signing";
 import type { NinePayConfig } from "../src/core/types";
 
 describe("createPaymentUrl", () => {
@@ -9,7 +10,6 @@ describe("createPaymentUrl", () => {
     checksumKey: "test-checksum",
     baseUrl: "https://payment.9pay.vn",
     returnUrl: "https://example.com/callback",
-    cancelUrl: "https://example.com/cancel",
   };
 
   it("returns a URL pointing to the 9Pay portal", () => {
@@ -117,4 +117,117 @@ describe("createPaymentUrl", () => {
     expect(signature).not.toContain("\n");
     expect(signature).not.toContain(" ");
   });
+
+  it("cross-verifies the signature against the signed params", () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1700000000000);
+    try {
+      const url = createPaymentUrl(config, {
+        orderId: "ORD-001",
+        amount: 1000,
+        currency: "VND",
+        description: "Test Payment",
+      });
+
+      const urlObj = new URL(url);
+      const decoded = JSON.parse(
+        Buffer.from(urlObj.searchParams.get("baseEncode")!, "base64").toString(
+          "utf-8"
+        )
+      ) as Record<string, string | number>;
+      const time = (decoded as Record<string, number>).time;
+      const httpQuery = buildHttpQuery(
+        decoded as Record<string, string | number>
+      );
+      const expected = buildSignature(
+        config.baseUrl!,
+        Number(time),
+        httpQuery,
+        config.secretKey
+      );
+      const rawSignature = url
+        .split("signature=")[1]
+        .split("&")[0];
+      const actual = decodeURIComponent(rawSignature.replace(/\+/g, "%2B"));
+
+      expect(actual).toBe(expected);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("defaults back_url to return_url", () => {
+    const url = createPaymentUrl(config, {
+      orderId: "ORD-001",
+      amount: 1000,
+      currency: "VND",
+      description: "Test Payment",
+    });
+
+    const decoded = JSON.parse(
+      Buffer.from(
+        new URL(url).searchParams.get("baseEncode")!,
+        "base64"
+      ).toString("utf-8")
+    );
+
+    expect(decoded.back_url).toBe("https://example.com/callback");
+  });
+
+  it("embeds intentId in return_url and back_url when provided", () => {
+    const url = createPaymentUrl(config, {
+      orderId: "ORD-001",
+      amount: 1000,
+      currency: "VND",
+      description: "Test Payment",
+      paymentIntentId: "pi_123",
+    });
+
+    const decoded = JSON.parse(
+      Buffer.from(
+        new URL(url).searchParams.get("baseEncode")!,
+        "base64"
+      ).toString("utf-8")
+    );
+
+    expect(decoded.return_url).toBe(
+      "https://example.com/callback?intentId=pi_123"
+    );
+    expect(decoded.back_url).toBe(
+      "https://example.com/callback?intentId=pi_123"
+    );
+  });
+
+  it("does not let options override core fields", () => {
+    const url = createPaymentUrl(config, {
+      orderId: "ORD-001",
+      amount: 1000,
+      currency: "VND",
+      description: "Test Payment",
+      options: { merchantKey: "evil" } as never,
+    });
+
+    const decoded = JSON.parse(
+      Buffer.from(
+        new URL(url).searchParams.get("baseEncode")!,
+        "base64"
+      ).toString("utf-8")
+    );
+
+    expect(decoded.merchantKey).toBe("test-merchant");
+  });
+
+  it("rejects non-positive amounts", () => {
+    expect(() =>
+      createPaymentUrl(config, {
+        orderId: "ORD-001",
+        amount: 0,
+        currency: "VND",
+        description: "Test Payment",
+      })
+    ).toThrow(/amount must be a positive/);
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });

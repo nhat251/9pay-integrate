@@ -1,4 +1,5 @@
 import type { NinePayConfig, CreatePaymentParams } from "./types";
+import { buildReturnUrl } from "./return-url";
 import { buildHttpQuery, buildSignature } from "./signing";
 
 /**
@@ -12,18 +13,28 @@ export function createPaymentUrl(
   config: NinePayConfig,
   params: CreatePaymentParams
 ): string {
+  if (!Number.isFinite(params.amount) || params.amount <= 0) {
+    throw new Error("9pay-integrate: amount must be a positive finite number");
+  }
+  if (String(params.orderId).trim().length === 0) {
+    throw new Error("9pay-integrate: orderId must not be empty");
+  }
+
   const time = Math.floor(Date.now() / 1000);
+  const returnUrl = params.paymentIntentId
+    ? buildReturnUrl(config.returnUrl, params.paymentIntentId)
+    : config.returnUrl;
 
   const parameters: Record<string, string | number> = {
+    ...params.options,
     merchantKey: config.merchantKey,
     time,
     invoice_no: params.orderId,
     amount: params.amount,
     currency: params.currency,
     description: params.description,
-    return_url: config.returnUrl,
-    ...(config.cancelUrl ? { back_url: config.cancelUrl } : {}),
-    ...params.options,
+    return_url: returnUrl,
+    back_url: returnUrl,
   };
 
   const httpQuery = buildHttpQuery(parameters);
@@ -34,7 +45,6 @@ export function createPaymentUrl(
     config.secretKey
   );
 
-  // Sort parameters for baseEncode to ensure consistency
   const sortedParameters: Record<string, string | number> = {};
   Object.keys(parameters)
     .sort()

@@ -78,4 +78,24 @@ describe("verifyChecksum", () => {
     expect(verification.valid).toBe(false);
     expect(verification.error).toBe("Failed to decode result");
   });
+
+  it("accepts lowercase checksums", () => {
+    const payload = JSON.stringify({ invoice_no: "ORD-123", status: 5 });
+    const result = Buffer.from(payload).toString("base64");
+    const checksum = makeValidChecksum(result).toLowerCase();
+
+    const verification = verifyChecksum(result, checksum, checksumKey);
+
+    expect(verification.valid).toBe(true);
+  });
+
+  it("rejects when checksumKey is missing", () => {
+    const payload = JSON.stringify({ invoice_no: "ORD-123" });
+    const result = Buffer.from(payload).toString("base64");
+
+    const verification = verifyChecksum(result, makeValidChecksum(result), "");
+
+    expect(verification.valid).toBe(false);
+    expect(verification.error).toBe("Missing result or checksum");
+  });
 });

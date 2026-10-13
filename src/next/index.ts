@@ -6,6 +6,11 @@ export {
   handlePaymentStatus,
 } from "./handlers";
 
+export type {
+  Handle9PayIpnOptions,
+  HandlePaymentStatusOptions,
+} from "./handlers";
+
 // Re-export core types useful for Next.js routes
 export type {
   NinePayConfig,

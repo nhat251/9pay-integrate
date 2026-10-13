@@ -19,7 +19,7 @@ describe("processIpn", () => {
   function makeOptions(): IpnProcessorOptions {
     const repo: OrderRepository = {
       createOrder: vi.fn(),
-      getOrderStatus: vi.fn(),
+      getOrderStatus: vi.fn().mockResolvedValue("pending"),
       updateOrderStatus: vi.fn().mockResolvedValue({ id: "1" }),
     };
     return {
@@ -150,7 +150,7 @@ describe("processIpn", () => {
 
     const repo: OrderRepository = {
       createOrder: vi.fn(),
-      getOrderStatus: vi.fn(),
+      getOrderStatus: vi.fn().mockResolvedValue("pending"),
       updateOrderStatus: vi.fn().mockRejectedValue(new Error("DB connection lost")),
     };
 
@@ -168,7 +168,7 @@ describe("processIpn", () => {
 
     expect(result.success).toBe(false);
     expect(result.statusCode).toBe(500);
-    expect(result.message).toContain("DB connection lost");
+    expect(result.message).toBe("Failed to update order");
     expect(result.orderId).toBe("ORD-ERROR");
   });
 
@@ -182,7 +182,7 @@ describe("processIpn", () => {
 
     const repo: OrderRepository = {
       createOrder: vi.fn(),
-      getOrderStatus: vi.fn(),
+      getOrderStatus: vi.fn().mockResolvedValue("pending"),
       updateOrderStatus: vi.fn().mockResolvedValue({ id: "1" }),
     };
 
@@ -220,7 +220,7 @@ describe("processIpn", () => {
 
     const repo: OrderRepository = {
       createOrder: vi.fn(),
-      getOrderStatus: vi.fn(),
+      getOrderStatus: vi.fn().mockResolvedValue("pending"),
       updateOrderStatus: vi.fn().mockResolvedValue({ id: "1" }),
     };
 
@@ -239,5 +239,172 @@ describe("processIpn", () => {
 
     expect(result.success).toBe(true);
     expect(result.statusCode).toBe(200);
+    expect(repo.updateOrderStatus).toHaveBeenCalledWith(
+      "ORD-no-hooks",
+      "completed"
+    );
+  });
+
+  it("maps cancelled status (8) to cancelled, not failed", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-CANCEL",
+      status: 8,
+      amount: 500,
+      currency: "VND",
+    });
+    const options = makeOptions();
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(200);
+    expect(result.message).toBe("Payment cancelled");
+    expect(options.orderRepository.updateOrderStatus).toHaveBeenCalledWith(
+      "ORD-CANCEL",
+      "cancelled"
+    );
+  });
+
+  it("flags manual review (status 3) without changing the order", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-REVIEW",
+      status: 3,
+      amount: 500,
+      currency: "VND",
+    });
+    const onManualReview = vi.fn().mockResolvedValue(undefined);
+    const options = makeOptions();
+    options.notifications = { onManualReview };
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(true);
+    expect(result.statusCode).toBe(200);
+    expect(result.manualReview).toBe(true);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+    expect(onManualReview).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: "ORD-REVIEW", status: 3 })
+    );
+  });
+
+  it("acknowledges unknown statuses without touching the order", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-PENDING",
+      status: 2,
+      amount: 500,
+      currency: "VND",
+    });
+    const options = makeOptions();
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(true);
+    expect(result.statusCode).toBe(200);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing status without touching the order", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-NO-STATUS",
+      amount: 500,
+      currency: "VND",
+    });
+    const options = makeOptions();
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(400);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects amount mismatch when expected is set", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-UNDERPAID",
+      status: 5,
+      amount: 1,
+      currency: "VND",
+    });
+    const options = makeOptions();
+    options.expected = { amount: 603900, currency: "VND" };
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(400);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("rejects currency mismatch when expected is set", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-FX",
+      status: 5,
+      amount: 603900,
+      currency: "USD",
+    });
+    const options = makeOptions();
+    options.expected = { amount: 603900, currency: "VND" };
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(400);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("acks duplicate deliveries without updating again", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-DONE",
+      status: 5,
+      amount: 100,
+      currency: "VND",
+    });
+    const options = makeOptions();
+    vi.mocked(options.orderRepository.getOrderStatus).mockResolvedValue(
+      "completed"
+    );
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(true);
+    expect(result.statusCode).toBe(200);
+    expect(result.duplicate).toBe(true);
+    expect(options.orderRepository.updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the order does not exist", async () => {
+    const payload = makePayload({
+      invoice_no: "ORD-GHOST",
+      status: 5,
+      amount: 100,
+      currency: "VND",
+    });
+    const options = makeOptions();
+    vi.mocked(options.orderRepository.updateOrderStatus).mockResolvedValue(
+      null
+    );
+
+    const result = await processIpn(payload, options);
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(404);
+  });
+
+  it("trims padded invoice_no values", async () => {
+    const payload = makePayload({
+      invoice_no: "  ORD-PADDED  ",
+      status: 5,
+      amount: 100,
+      currency: "VND",
+    });
+    const options = makeOptions();
+
+    const result = await processIpn(payload, options);
+
+    expect(result.orderId).toBe("ORD-PADDED");
+    expect(options.orderRepository.updateOrderStatus).toHaveBeenCalledWith(
+      "ORD-PADDED",
+      "completed"
+    );
   });
 });

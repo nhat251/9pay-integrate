@@ -1,5 +1,20 @@
-import * as crypto from "crypto";
+import * as crypto from "node:crypto";
 import type { VerificationResult } from "./types";
+
+function checksumEquals(normalized: string, expected: string): boolean {
+  if (normalized.length !== expected.length) return false;
+  if (typeof crypto.timingSafeEqual === "function") {
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(normalized),
+        Buffer.from(expected)
+      );
+    } catch {
+      return false;
+    }
+  }
+  return normalized === expected;
+}
 
 /**
  * Verify 9Pay callback/IPN checksum.
@@ -16,24 +31,32 @@ export function verifyChecksum(
   checksum: string,
   checksumKey: string
 ): VerificationResult {
-  if (!result || !checksum) {
+  if (!result || !checksum || !checksumKey) {
     return { valid: false, data: null, error: "Missing result or checksum" };
   }
 
+  const normalized = checksum.trim().toUpperCase();
   const expected = crypto
     .createHash("sha256")
     .update(result + checksumKey)
     .digest("hex")
     .toUpperCase();
 
-  if (expected !== checksum) {
+  if (!checksumEquals(normalized, expected)) {
     return { valid: false, data: null, error: "Checksum mismatch" };
   }
 
   try {
-    const decoded = JSON.parse(
+    const decoded: unknown = JSON.parse(
       Buffer.from(result, "base64").toString("utf-8")
     );
+    if (
+      decoded === null ||
+      typeof decoded !== "object" ||
+      Array.isArray(decoded)
+    ) {
+      return { valid: false, data: null, error: "Failed to decode result" };
+    }
     return { valid: true, data: decoded as Record<string, unknown> };
   } catch {
     return { valid: false, data: null, error: "Failed to decode result" };

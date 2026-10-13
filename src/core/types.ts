@@ -11,7 +11,6 @@ export interface NinePayConfig {
   checksumKey: string;
   baseUrl?: string;
   returnUrl: string;
-  cancelUrl?: string;
 }
 
 // ─── Payment Creation ───────────────────────────────────────────────────────
@@ -34,21 +33,31 @@ export interface CreatePaymentParams {
   amount: number;
   currency: string;
   description: string;
+  /** When set, return_url/back_url embed ?intentId= for linking callbacks */
+  paymentIntentId?: string;
   options?: NinePayPaymentOptions;
 }
 
 // ─── Callback Verification ──────────────────────────────────────────────────
 
-export interface VerifyCallbackResult {
-  success: boolean;
-  orderId?: string;
-  amount?: number;
-  currency?: string;
-  status?: number;
-  /** Raw decoded payload for consumer access */
-  rawParams: Record<string, unknown>;
-  error?: string;
-}
+export type VerifyCallbackResult =
+  | {
+      success: true;
+      orderId: string;
+      amount: number;
+      currency: string;
+      status: number;
+      /** True when status indicates a paid order (status 5). IPN remains the source of truth. */
+      isSuccess: boolean;
+      /** Raw decoded payload for consumer access */
+      rawParams: Record<string, unknown>;
+    }
+  | {
+      success: false;
+      rawParams: Record<string, unknown>;
+      error: string;
+      isSuccess: false;
+    };
 
 // ─── Checksum Verification ──────────────────────────────────────────────────
 
@@ -60,7 +69,12 @@ export interface VerificationResult<T = Record<string, unknown>> {
 
 // ─── Order Management (consumer implements) ─────────────────────────────────
 
-export type OrderStatus = "neworder" | "pending" | "completed" | "failed";
+export type OrderStatus =
+  | "neworder"
+  | "pending"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface CreateOrderParams {
   orderId?: string;
@@ -75,7 +89,7 @@ export interface OrderRepository<TOrder = unknown> {
   getOrderStatus(orderId: string): Promise<OrderStatus | null>;
   updateOrderStatus(
     orderId: string,
-    status: "completed" | "failed"
+    status: "completed" | "failed" | "cancelled"
   ): Promise<TOrder | null>;
 }
 
@@ -90,6 +104,15 @@ export interface NotificationContext {
   metadata?: Record<string, unknown>;
 }
 
+export interface ManualReviewContext {
+  orderId: string;
+  amount: number;
+  currency: string;
+  status: number;
+  errorCode: string;
+  metadata?: Record<string, unknown>;
+}
+
 export type NotificationHandler = (
   ctx: NotificationContext
 ) => Promise<void> | void;
@@ -97,6 +120,7 @@ export type NotificationHandler = (
 export interface NotificationHooks {
   onSuccess?: NotificationHandler;
   onFailure?: NotificationHandler;
+  onManualReview?: (ctx: ManualReviewContext) => Promise<void> | void;
 }
 
 // ─── IPN Processing ─────────────────────────────────────────────────────────
@@ -111,12 +135,27 @@ export interface IpnProcessResult {
   message: string;
   statusCode: number;
   orderId?: string;
+  /** True when the order was already settled by an earlier IPN delivery */
+  duplicate?: boolean;
+  /** True when the payment needs human review (no status change applied) */
+  manualReview?: boolean;
 }
 
-export interface IpnProcessorOptions {
+export interface IpnProcessorLogger {
+  error: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+}
+
+export interface IpnProcessorOptions<TOrder = unknown> {
   config: NinePayConfig;
-  orderRepository: OrderRepository;
+  orderRepository: OrderRepository<TOrder>;
   notifications?: NotificationHooks;
+  /** When set, IPN amount/currency must match or the payload is rejected */
+  expected?: {
+    amount: number;
+    currency: string;
+  };
+  logger?: IpnProcessorLogger;
 }
 
 // ─── Status Polling Response ────────────────────────────────────────────────

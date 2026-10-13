@@ -8,12 +8,13 @@ import { DEFAULT_BASE_URL } from "./constants";
 export function validateConfig(
   config: Partial<NinePayConfig>
 ): NinePayConfig {
+  const { merchantKey, secretKey, checksumKey, returnUrl } = config;
   const errors: string[] = [];
 
-  if (!config.merchantKey) errors.push("merchantKey is required");
-  if (!config.secretKey) errors.push("secretKey is required");
-  if (!config.checksumKey) errors.push("checksumKey is required");
-  if (!config.returnUrl) errors.push("returnUrl is required");
+  if (!merchantKey) errors.push("merchantKey is required");
+  if (!secretKey) errors.push("secretKey is required");
+  if (!checksumKey) errors.push("checksumKey is required");
+  if (!returnUrl) errors.push("returnUrl is required");
 
   if (errors.length > 0) {
     throw new Error(
@@ -22,12 +23,11 @@ export function validateConfig(
   }
 
   return {
-    merchantKey: config.merchantKey!,
-    secretKey: config.secretKey!,
-    checksumKey: config.checksumKey!,
+    merchantKey: merchantKey as string,
+    secretKey: secretKey as string,
+    checksumKey: checksumKey as string,
     baseUrl: config.baseUrl || DEFAULT_BASE_URL,
-    returnUrl: config.returnUrl!,
-    cancelUrl: config.cancelUrl || config.returnUrl,
+    returnUrl: returnUrl as string,
   };
 }
 
@@ -45,6 +45,5 @@ export function configFromEnv(
     checksumKey: env.NINEPAY_CHECKSUM_KEY,
     baseUrl: env.NINEPAY_BASE_URL,
     returnUrl: env.NINEPAY_RETURN_URL,
-    cancelUrl: env.NINEPAY_CANCEL_URL,
   });
 }

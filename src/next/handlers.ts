@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import type {
+  IpnProcessorLogger,
   NinePayConfig,
-  OrderRepository,
   NotificationHooks,
+  OrderRepository,
   VerifyCallbackResult,
-  PaymentStatusResponse,
 } from "../core/types";
 import { verifyCallback } from "../core/verify-callback";
 import { processIpn } from "../core/ipn-processor";
@@ -19,10 +19,18 @@ import { extractIpnFromFormData, extractIpnFromUrlEncoded } from "../core/ipn";
  * Returns a result object — consumer decides the redirect target.
  * This is Option B: package does NOT redirect, only verifies and returns data.
  *
+ * The callback is display-only: only the IPN settles orders. Route
+ * successful checksums to a processing page that polls the order status,
+ * and anything else to an error page.
+ *
  * Example consumer usage:
  *   const result = verifyNinePayCallback(request, config);
- *   if (!result.success) return NextResponse.redirect(new URL("/payment/error", request.url));
- *   return NextResponse.redirect(new URL(`/payment/process?orderId=${result.orderId}`, request.url));
+ *   if (!result.success || !result.isSuccess) {
+ *     return NextResponse.redirect(new URL("/payment/error", request.url));
+ *   }
+ *   return NextResponse.redirect(
+ *     new URL(`/payment/process?orderId=${encodeURIComponent(result.orderId)}`, request.url)
+ *   );
  */
 export function verifyNinePayCallback(
   request: Request,
@@ -36,7 +44,8 @@ export function verifyNinePayCallback(
 
 /**
  * Parse IPN payload from a Next.js Request.
- * Handles both multipart/form-data and application/x-www-form-urlencoded.
+ * Handles multipart/form-data and application/x-www-form-urlencoded.
+ * A missing content-type is treated as a urlencoded body attempt.
  */
 async function parseIpnRequest(
   request: Request
@@ -44,18 +53,33 @@ async function parseIpnRequest(
   const contentType = request.headers.get("content-type") || "";
 
   if (contentType.includes("multipart/form-data")) {
-    const formData = await request.formData();
-    const extracted = extractIpnFromFormData(formData);
-    return extracted;
+    return extractIpnFromFormData(await request.formData());
   }
 
-  if (contentType.includes("application/x-www-form-urlencoded")) {
+  if (
+    contentType.includes("application/x-www-form-urlencoded") ||
+    contentType === ""
+  ) {
     const body = await request.text();
     const extracted = extractIpnFromUrlEncoded(body);
+    if (!extracted.result || !extracted.checksum) {
+      throw new Error("Invalid IPN payload: missing result or checksum");
+    }
     return extracted;
   }
 
-  throw new Error(`Unsupported IPN content-type: ${contentType || "unknown"}`);
+  throw new Error(`Unsupported IPN content-type: ${contentType}`);
+}
+
+export interface Handle9PayIpnOptions<TOrder = unknown> {
+  config: NinePayConfig;
+  orderRepository: OrderRepository<TOrder>;
+  notifications?: NotificationHooks;
+  expected?: {
+    amount: number;
+    currency: string;
+  };
+  logger?: IpnProcessorLogger;
 }
 
 /**
@@ -78,50 +102,69 @@ async function parseIpnRequest(
  *     });
  *   }
  */
-export async function handle9PayIpn(
+export async function handle9PayIpn<TOrder = unknown>(
   request: Request,
-  options: {
-    config: NinePayConfig;
-    orderRepository: OrderRepository;
-    notifications?: NotificationHooks;
-  }
+  options: Handle9PayIpnOptions<TOrder>
 ): Promise<NextResponse> {
+  let payload: { result: string; checksum: string };
   try {
-    const payload = await parseIpnRequest(request);
+    payload = await parseIpnRequest(request);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Invalid IPN payload";
+    const status = message.startsWith("Unsupported IPN content-type")
+      ? 415
+      : 400;
+    return NextResponse.json({ success: false, message }, { status });
+  }
 
+  try {
     const result = await processIpn(payload, {
       config: options.config,
       orderRepository: options.orderRepository,
       notifications: options.notifications,
+      expected: options.expected,
+      logger: options.logger,
     });
 
     return NextResponse.json(
       { success: result.success, message: result.message },
       { status: result.statusCode }
     );
-  } catch {
+  } catch (error) {
+    options.logger?.error("9pay-integrate IPN processing failed", error);
     return NextResponse.json(
-      { success: false, message: "Unsupported or invalid form payload" },
-      { status: 400 }
+      { success: false, message: "Internal server error" },
+      { status: 500 }
     );
   }
 }
 
 // ─── Payment Status ─────────────────────────────────────────────────────────
 
+export interface HandlePaymentStatusOptions<TOrder = unknown> {
+  orderRepository: OrderRepository<TOrder>;
+  /** Reject the lookup (403) unless the caller owns the order */
+  authorize?: (orderId: string) => Promise<boolean> | boolean;
+}
+
 /**
  * Handle payment status polling (GET /api/payment/status).
  *
+ * Pass `authorize` to prevent order enumeration — without it any
+ * caller can probe arbitrary orderIds.
+ *
  * Consumer usage:
  *   export async function GET(request: Request) {
- *     return handlePaymentStatus(request, { orderRepository: repo });
+ *     return handlePaymentStatus(request, {
+ *       orderRepository: repo,
+ *       authorize: (orderId) => belongsToSession(orderId),
+ *     });
  *   }
  */
-export async function handlePaymentStatus(
+export async function handlePaymentStatus<TOrder = unknown>(
   request: Request,
-  options: {
-    orderRepository: OrderRepository;
-  }
+  options: HandlePaymentStatusOptions<TOrder>
 ): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const orderId = searchParams.get("orderId");
@@ -134,6 +177,13 @@ export async function handlePaymentStatus(
   }
 
   try {
+    if (options.authorize && !(await options.authorize(orderId))) {
+      return NextResponse.json(
+        { success: false, message: "Forbidden" },
+        { status: 403 }
+      );
+    }
+
     const status = await options.orderRepository.getOrderStatus(orderId);
 
     if (status === null) {
@@ -143,7 +193,7 @@ export async function handlePaymentStatus(
       );
     }
 
-    return NextResponse.json({ success: true, status } satisfies PaymentStatusResponse);
+    return NextResponse.json({ success: true, status });
   } catch {
     return NextResponse.json(
       { success: false, message: "Internal server error" },
