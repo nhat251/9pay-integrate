@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import * as crypto from "crypto";
-import { buildHttpQuery, buildSignature } from "../src/core/signing";
+import {
+  buildAuthorizationHeaders,
+  buildGetSignature,
+  buildHttpQuery,
+  buildPostSignature,
+  buildSignature,
+} from "../src/core/signing";
 
 describe("buildHttpQuery", () => {
   it("sorts keys alphabetically", () => {
@@ -86,5 +92,52 @@ describe("buildSignature", () => {
       .toString("base64");
 
     expect(actualSig).toBe(expectedSig);
+  });
+});
+
+describe("buildPostSignature / buildGetSignature", () => {
+  it("buildPostSignature matches the portal signature for /payments/create", () => {
+    const baseUrl = "https://payment.9pay.vn";
+    const time = 1700000000;
+    const httpQuery = "a=1";
+
+    expect(buildPostSignature(baseUrl, "/payments/create", time, httpQuery, "s")).toBe(
+      buildSignature(baseUrl, time, httpQuery, "s")
+    );
+  });
+
+  it("buildPostSignature omits the trailing segment for empty bodies", () => {
+    const sig = buildPostSignature("https://b.vn", "/p", 1, "", "s");
+    const expected = crypto
+      .createHmac("sha256", "s")
+      .update("POST\nhttps://b.vn/p\n1")
+      .digest("base64");
+    expect(sig).toBe(expected);
+  });
+
+  it("buildGetSignature follows GET message format", () => {
+    const sig = buildGetSignature("https://b.vn", "/v2/payments/X/inquire", 7, "s");
+    const expected = crypto
+      .createHmac("sha256", "s")
+      .update("GET\nhttps://b.vn/v2/payments/X/inquire\n7")
+      .digest("base64");
+    expect(sig).toBe(expected);
+  });
+
+  it("buildAuthorizationHeaders returns Date + Signature headers", () => {
+    const headers = buildAuthorizationHeaders("msg", 7, "merchant", "secret");
+    expect(headers.Date).toBe("7");
+    expect(headers.Authorization).toContain("Credential=merchant");
+    expect(headers.Authorization).toContain("Algorithm=HS256");
+  });
+
+  it("buildAuthorizationHeaders signature matches manual HMAC", () => {
+    const headers = buildAuthorizationHeaders("msg", 7, "merchant", "secret");
+    const expected = crypto
+      .createHmac("sha256", "secret")
+      .update("msg")
+      .digest("base64");
+
+    expect(headers.Authorization).toContain(`Signature=${expected}`);
   });
 });

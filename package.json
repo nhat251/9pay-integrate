@@ -11,6 +11,9 @@
   },
   "homepage": "https://github.com/nhat251/9pay-integrate#readme",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -34,13 +37,31 @@
         "types": "./dist/next/index.d.cts",
         "default": "./dist/next/index.cjs"
       }
+    },
+    "./nest": {
+      "import": {
+        "types": "./dist/nest/index.d.ts",
+        "default": "./dist/nest/index.js"
+      },
+      "require": {
+        "types": "./dist/nest/index.d.cts",
+        "default": "./dist/nest/index.cjs"
+      }
     }
   },
   "peerDependencies": {
-    "next": ">=14.0.0"
+    "next": ">=14.0.0",
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/config": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "next": {
+      "optional": true
+    },
+    "@nestjs/common": {
+      "optional": true
+    },
+    "@nestjs/config": {
       "optional": true
     }
   },
@@ -52,11 +73,13 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@nestjs/common": "^10.4.22",
+    "@nestjs/config": "^3.3.0",
+    "@types/node": "^20.0.0",
+    "next": ">=14.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^2.0.0",
-    "next": ">=14.0.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^2.0.0"
   },
   "files": [
     "dist"

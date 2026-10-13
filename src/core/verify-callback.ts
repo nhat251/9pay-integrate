@@ -1,4 +1,5 @@
 import type { NinePayConfig, VerifyCallbackResult } from "./types";
+import { NINEPAY_SUCCESS_STATUS } from "./transaction-status";
 import { verifyChecksum } from "./verification";
 
 /**
@@ -9,6 +10,10 @@ import { verifyChecksum } from "./verification";
  *
  * Returns an object — consumer decides what to redirect to.
  * This is Option B: package does NOT redirect, only returns data.
+ *
+ * The browser redirect is display-only: a valid checksum does not mean
+ * the order is paid. Only the server-to-server IPN settles orders —
+ * send the user to a processing page that polls the order status.
  */
 export function verifyCallback(
   searchParams: URLSearchParams,
@@ -24,6 +29,7 @@ export function verifyCallback(
       success: false,
       rawParams: {},
       error: verification.error || "Invalid callback payload",
+      isSuccess: false,
     };
   }
 
@@ -32,8 +38,8 @@ export function verifyCallback(
 
   const orderId =
     typeof invoiceNo === "string" && invoiceNo.trim().length > 0
-      ? invoiceNo
-      : typeof invoiceNo === "number"
+      ? invoiceNo.trim()
+      : typeof invoiceNo === "number" && Number.isSafeInteger(invoiceNo)
         ? String(invoiceNo)
         : null;
 
@@ -42,15 +48,43 @@ export function verifyCallback(
       success: false,
       rawParams: paymentInfo,
       error: "Missing invoice_no in callback payload",
+      isSuccess: false,
+    };
+  }
+
+  const amount = readNumber(paymentInfo.amount);
+  const status = readNumber(paymentInfo.status);
+  if (amount === null || status === null) {
+    return {
+      success: false,
+      rawParams: paymentInfo,
+      error: "Malformed amount or status in callback payload",
+      isSuccess: false,
     };
   }
 
   return {
     success: true,
     orderId,
-    amount: Number(paymentInfo.amount ?? 0),
-    currency: String(paymentInfo.currency ?? ""),
-    status: Number(paymentInfo.status ?? 0),
+    amount,
+    currency: readCurrency(paymentInfo),
+    status,
+    isSuccess: status === NINEPAY_SUCCESS_STATUS,
     rawParams: paymentInfo,
   };
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readCurrency(paymentInfo: Record<string, unknown>): string {
+  return typeof paymentInfo.currency === "string"
+    ? paymentInfo.currency
+    : "";
 }
